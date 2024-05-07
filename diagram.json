@@ -1,0 +1,27 @@
+
+{
+  "version": 1,
+  "editor": "wokwi",
+  "author": "ninjapiraatti <tuoppil@gmail.com>",
+  "parts": [
+      {
+        "type": "board-esp32-c3-devkitm-1",
+        "id": "esp",
+        "top": -134.7,
+        "left": 44.22,
+        "attrs": { "builder": "rust-nostd-esp" }
+      },
+      { "type": "wokwi-ky-040", "id": "encoder1", "top": -123.1, "left": -173.6, "attrs": {} }
+    ],
+    "connections": [
+      [ "esp:TX", "$serialMonitor:RX", "", [] ],
+      [ "esp:RX", "$serialMonitor:TX", "", [] ],
+      [ "esp:GND.4", "encoder1:GND", "black", [ "h0" ] ],
+      [ "esp:5V.1", "encoder1:VCC", "red", [ "h-86.4", "v-86.4" ] ],
+      [ "esp:7", "encoder1:SW", "green", [ "h35.98", "v-124.8", "h-211.2", "v57.6" ] ],
+      [ "esp:0", "encoder1:DT", "green", [ "h45.58", "v-144", "h-230.4", "v76.8" ] ],
+      [ "esp:1", "encoder1:CLK", "green", [ "h55.18", "v-163.2", "h-249.6", "v9.6" ] ]
+    ],
+    "serialMonitor": { "display": "terminal" },
+    "dependencies": {}
+  }
