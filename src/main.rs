@@ -1,67 +1,102 @@
 use anyhow::Result;
-use esp_idf_hal::{delay::FreeRtos, gpio::{InputPin, Level, OutputPin}};
-use esp_idf_svc::hal::{
-    gpio::{PinDriver, Pull},
-    peripherals::Peripherals,
+use esp_idf_svc::hal::
+    peripherals::Peripherals
+;
+use std::{sync::atomic::{ AtomicI32, Ordering }, thread, time::Duration};
+
+use esp_idf_hal::i2c::*;
+use esp_idf_hal::prelude::*;
+use ssd1306::{prelude::*, I2CDisplayInterface, Ssd1306};
+
+use embedded_graphics::{
+    mono_font::{ascii::{FONT_8X13}, MonoTextStyleBuilder}, pixelcolor::BinaryColor, prelude::*, primitives::{Arc as Arch, Circle, PrimitiveStyle, PrimitiveStyleBuilder, Rectangle}, text::{Baseline, Text}
 };
-use std::thread;
+use std::sync::Arc;
 
-struct Rotencoder<T1: InputPin + OutputPin, T2: InputPin + OutputPin> {
-    clk: T1,
-    dt: T2,
-}
-
-impl<T1: InputPin + OutputPin, T2: InputPin + OutputPin> Rotencoder<T1, T2> {
-    fn start_thread(self) {
-        let _t1: thread::JoinHandle<_> = thread::Builder::new()
-            .stack_size(2000)
-            .spawn(move || {
-                
-                let mut dt_last = Level::Low;
-                let mut counter: i32 = 0;
-            
-                let mut button_1 = PinDriver::input(self.clk).unwrap();
-                button_1.set_pull(Pull::Up).unwrap();
-                let mut button_2 = PinDriver::input(self.dt).unwrap();
-                button_2.set_pull(Pull::Up).unwrap();
-
-                loop {
-                    if button_1.get_level() != dt_last {
-                        dt_last = button_1.get_level();
-                        
-                        if dt_last == Level::High {
-                            if button_2.get_level() == Level::High {
-                                counter += 1;
-                            } else {
-                                counter -= 1;
-                            }
-                            println!("counter is {:?}", counter);
-                        } else {
-                            if button_2.get_level() == Level::Low {
-                                counter += 1;
-                            } else {
-                                counter -= 1;
-                            }
-                        }
-                        FreeRtos::delay_ms(1);
-                    }
-                }
-
-            })
-            .unwrap();
-    }
-}
+use rotencoder::rotencoder::Rotencoder;
 
 fn main() -> Result<()> {
     esp_idf_svc::sys::link_patches();
     let peripherals = Peripherals::take()?;
 
-    let encoder = Rotencoder {
-        clk: peripherals.pins.gpio0,
-        dt: peripherals.pins.gpio1,
-    };
+    let counter = Arc::new(AtomicI32::new(0));
 
-    encoder.start_thread();
+    let encoder = Rotencoder::with_counter(
+        peripherals.pins.gpio0,
+        peripherals.pins.gpio1,
+        counter.clone(),
+    );
 
-    Ok(())
+    let _rotencoder_handle = encoder.start_thread();
+
+    let _oled_handle = thread::Builder::new()
+            .stack_size(4000)
+            .spawn(move || {
+
+                let i2c = peripherals.i2c0;
+                let scl = peripherals.pins.gpio3;
+                let sda = peripherals.pins.gpio2;
+
+                let config = I2cConfig::new().baudrate(400.kHz().into());
+                let i2c = I2cDriver::new(i2c, sda, scl, &config).unwrap();
+
+                let interface = I2CDisplayInterface::new(i2c);
+                let mut display = Ssd1306::new(interface, DisplaySize128x64, DisplayRotation::Rotate0)
+                    .into_buffered_graphics_mode();
+                display.init().unwrap();
+                
+                let text_style = MonoTextStyleBuilder::new()
+                    .font(&FONT_8X13)
+                    .text_color(BinaryColor::On)
+                    .build();
+
+                let off = PrimitiveStyleBuilder::new()
+                    .stroke_width(1)
+                    .stroke_color(BinaryColor::Off)
+                    .fill_color(BinaryColor::Off)
+                    .build();
+
+                loop {
+                    let position = counter.load(Ordering::SeqCst)*4;
+                    let foo = format!("{}", position);
+                    let bar = foo.len() as u32;
+                    let mut baz = FONT_8X13.character_size;
+                    baz.width = bar * (baz.width + 3);
+            
+                    Circle::new(Point::new(64-20, 15), 40 + 2*5)
+                        .into_styled(PrimitiveStyle::with_fill(BinaryColor::Off))
+                        .draw(&mut display)
+                        .unwrap();
+            
+                    Arch::new(Point::new(64-15, 20), 40, 0.0.deg(), ((position) as f32).deg())
+                        .into_styled(PrimitiveStyle::with_stroke(BinaryColor::On, 5))
+                        .draw(&mut display)
+                        .unwrap();
+            
+            
+                    Rectangle::new(Point::new(64-10, 30), baz)
+                        .into_styled(off)
+                        .draw(&mut display)
+                        .unwrap();
+            
+                    Text::with_baseline(foo.as_str(), Point::new(64-10, 30), text_style, Baseline::Top)
+                        .draw(&mut display)
+                        .unwrap();
+            
+            
+                    match display.flush() {
+                        Ok(_) => (),
+                        Err(e) => {
+                            println!("Error flushing: {:?}", e);
+                        }
+                    }
+            
+                    thread::sleep(Duration::from_millis(20));
+                }
+            })
+            .unwrap();
+
+    loop {
+        thread::sleep(Duration::from_millis(20));
+    }
 }
