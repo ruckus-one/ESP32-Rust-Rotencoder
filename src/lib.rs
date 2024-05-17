@@ -7,17 +7,19 @@ use esp_idf_svc::timer::EspTimerService;
 use std::sync::Arc;
 
 pub mod rotencoder {
+    use std::sync::{mpsc::channel, Mutex};
+
     use super::*;
 
     pub struct Rotencoder<T1: InputPin + OutputPin, T2: InputPin + OutputPin> {
         clk: T1,
         dt: T2,
-        counter: Arc<AtomicI32>,
+        cb: Arc<Mutex<dyn FnMut(i8) + Send + 'static>>,
     }
 
     impl<T1: InputPin + OutputPin, T2: InputPin + OutputPin> Rotencoder<T1, T2> {
-        pub fn with_counter(clk: T1, dt: T2, counter: Arc<AtomicI32>) -> Self {
-            Self { clk, dt, counter }
+        pub fn with_callback(clk: T1, dt: T2, cb: Arc<Mutex<dyn FnMut(i8) + Send + 'static>>) -> Self {
+            Self { clk, dt, cb }
         }
 
         pub fn start_thread(self) -> JoinHandle<EspTimer<'static>> {
@@ -31,8 +33,11 @@ pub mod rotencoder {
                     let mut button_2 = PinDriver::input(self.dt).unwrap();
                     button_2.set_pull(Pull::Up).unwrap();
 
+                    let (tx, rx) = channel::<i8>();
+
                     let callback_timer = {
                         let mut prev = 0;
+                        let mut internal_counter: i8 = 0;
 
                         timer_service.timer(move || {
                             let a = button_1.get_level();
@@ -41,17 +46,42 @@ pub mod rotencoder {
                             let diff = prev - curr;
 
                             if diff == -1 || diff == 3 {
-                                self.counter.fetch_sub(1, Ordering::SeqCst);
+                                internal_counter -= 1;
                                 prev = curr;
                             } else if diff == 1 || diff == -3 {
-                                self.counter.fetch_add(1, Ordering::SeqCst);
+                                internal_counter += 1;
                                 prev = curr;
+                            }
+
+                            if internal_counter >= 4 {
+                                tx.send(1).unwrap();
+                                internal_counter = 0;
+                            } else if internal_counter <= -4 {
+                                tx.send(-1).unwrap();
+                                internal_counter = 0;
                             }
                         })
                         .unwrap()
                     };
                     callback_timer.every(Duration::from_micros(244)).unwrap();
-                    return callback_timer;
+                    
+                    loop {
+
+                        match rx.try_recv() {
+                            Ok(state) => {
+                                match self.cb.try_lock() {
+                                    Ok(mut cb) => {
+                                        cb(state);
+                                    }
+                                    Err(_) => (),
+                                }
+                            }
+                            Err(_) => (),
+                        }
+        
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+
                 })
                 .unwrap()
         }
