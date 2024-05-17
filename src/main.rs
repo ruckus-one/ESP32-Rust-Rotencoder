@@ -13,7 +13,8 @@ use embedded_graphics::{
 };
 use std::sync::Arc;
 
-use rotencoder::rotencoder::Rotencoder;
+mod rotencoder;
+use rotencoder::Rotencoder;
 
 fn main() -> Result<()> {
     esp_idf_svc::sys::link_patches();
